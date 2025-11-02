@@ -1,0 +1,11 @@
+# Virtual Environment
+venv/
+
+# Large Data Files (we only need the .pkl models)
+data/*.csv
+
+# Python cache
+__pycache__/
+
+# VS Code settings
+.vscode/
