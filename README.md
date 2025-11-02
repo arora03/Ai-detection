@@ -2,6 +2,11 @@
 
 AIShield detects whether a given text or sentence is AI-generated or human-written using NLP and Machine Learning.
 
+
+### (https://ai-detection-first.streamlit.app/)
+
+AIShield is an AI-powered web application...
+
 ## Features
 - Custom trained Logistic Regression model with TF-IDF n-grams
 - Analyzes text sentence by sentence
