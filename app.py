@@ -7,6 +7,8 @@ import PyPDF2
 import io
 # --- NEW IMPORT ---
 from sklearn.metrics.pairwise import cosine_similarity
+nltk.download('punkt')
+nltk.download('punkt_tab')
 
 # ----------------------------------------------------------------------
 # Page Config
