@@ -5,10 +5,10 @@ from nltk.tokenize import sent_tokenize
 import numpy as np
 import PyPDF2
 import io
-# --- NEW IMPORT ---
+import re  # New Import
+from scipy.sparse import hstack, csr_matrix  # New Import
 from sklearn.metrics.pairwise import cosine_similarity
-nltk.download('punkt')
-nltk.download('punkt_tab')
+from sklearn.feature_extraction.text import TfidfVectorizer  # New Import
 
 # ----------------------------------------------------------------------
 # Page Config
@@ -21,9 +21,8 @@ st.set_page_config(
 
 # ----------------------------------------------------------------------
 # NEW: Define CSS for Light (Yellow) and Dark Themes
+# (This is your complete, working CSS block)
 # ----------------------------------------------------------------------
-# (This is the same 200+ line CSS block as before)
-# (It's hidden here for brevity, but it's in the full code below)
 LIGHT_CSS = """
 <style>
     :root {
@@ -278,19 +277,21 @@ else:
     st.markdown(LIGHT_CSS, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
-# Load Model (Cached for speed)
+# NEW: Helper functions to match train_model.py
 # ----------------------------------------------------------------------
-@st.cache_resource
-def load_model():
-    model = joblib.load("model/trained_model.pkl")
-    vectorizer = joblib.load("model/vectorizer.pkl")
-    return model, vectorizer
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'[^a-z0-9\s.,!?;:]', '', text)  # keep punctuation
+    return text.strip()
 
-model, vectorizer = load_model()
+def avg_word_len(text):
+    words = text.split()
+    return np.mean([len(w) for w in words]) if words else 0
 
-# ----------------------------------------------------------------------
-# Helper Function (To read PDF files)
-# ----------------------------------------------------------------------
+def punct_ratio(text):
+    return sum(c in ".,!?;:" for c in text) / (len(text) + 1)
+
 def extract_text_from_pdf(file_like_object):
     try:
         pdf_reader = PyPDF2.PdfReader(file_like_object)
@@ -303,13 +304,35 @@ def extract_text_from_pdf(file_like_object):
         return None
 
 # ----------------------------------------------------------------------
+# Load Model (Cached for speed)
+# ----------------------------------------------------------------------
+@st.cache_resource
+def load_model():
+    # --- UPDATED: Load the new _v2 models ---
+    model = joblib.load("model/trained_model_v2.pkl")
+    vectorizer = joblib.load("model/vectorizer_v2.pkl")
+    return model, vectorizer
+
+model, vectorizer = load_model()
+
+# --- NEW: Create a separate vectorizer for the Plagiarism tab ---
+@st.cache_resource
+def create_plag_vectorizer():
+    # This is a simple, word-level vectorizer for similarity checks
+    return TfidfVectorizer(stop_words='english', analyzer='word', ngram_range=(1, 2))
+
+plag_vectorizer = create_plag_vectorizer()
+
+
+# ----------------------------------------------------------------------
 # Sidebar
 # ----------------------------------------------------------------------
 with st.sidebar:
     st.markdown("<h1>🛡️ AIShield</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; margin-bottom: 20px;'>AI Content & Plagiarism Detector</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; margin-bottom: 20px;'>AI Content Detector</p>", unsafe_allow_html=True)
 
     # --- Model Accuracy Display (Will be Green) ---
+    # 🎯 IMPORTANT: Change "92.5%" to your new accuracy!
     st.metric(
         label="Model Accuracy",
         value="92.5%", # <-- HARDCODE YOUR *NEW* ACCURACY HERE
@@ -342,7 +365,6 @@ with st.sidebar:
 # Main App UI
 # ----------------------------------------------------------------------
 
-# --- NEW: Define the two main tabs ---
 ai_tab, plag_tab = st.tabs(["🤖 AI Content Detector", "📝 Plagiarism Checker"])
 
 # --- TAB 1: AI CONTENT DETECTOR ---
@@ -379,11 +401,29 @@ with ai_tab:
                 if not sentences:
                     st.error("Could not find any sentences to analyze.")
                 else:
+                    # --- UPDATED: New Prediction Logic ---
                     probs = []
                     for sentence in sentences:
-                        vec = vectorizer.transform([sentence])
-                        prob_ai = model.predict_proba(vec)[0][1] 
+                        # 1. Clean the sentence (using the new function)
+                        clean_sent = clean_text(sentence)
+                        
+                        # 2. Extract TF-IDF features (char n-grams)
+                        vec = vectorizer.transform([clean_sent])
+                        
+                        # 3. Extract stylometric features
+                        style_features = csr_matrix([[
+                            avg_word_len(clean_sent),
+                            len(clean_sent.split()),
+                            punct_ratio(clean_sent)
+                        ]])
+                        
+                        # 4. Combine all features
+                        X_sample = hstack([vec, style_features])
+                        
+                        # 5. Get probability
+                        prob_ai = model.predict_proba(X_sample)[0][1] 
                         probs.append(prob_ai)
+                    # --- END OF UPDATED LOGIC ---
                     
                     avg_prob = np.mean(probs) * 100
 
@@ -425,11 +465,10 @@ with ai_tab:
                             st.write("No sentences were found below the threshold.")
                         else:
                             st.markdown("".join(html_results_human), unsafe_allow_html=True)
-
         else:
             st.info("Paste text or upload a PDF, then click 'Analyze Text' in the sidebar to see the results.")
 
-# --- TAB 2: PLAGIARISM CHECKER (NEW FEATURE) ---
+# --- TAB 2: PLAGIARISM CHECKER ---
 with plag_tab:
     st.header("Check for Plagiarism Between Two Texts")
     
@@ -445,12 +484,12 @@ with plag_tab:
     
     if analyze_button:
         if source_text.strip() != "" and suspect_text.strip() != "":
-            # Use the same vectorizer from our AI model
+            # --- UPDATED: New Plagiarism Logic ---
             try:
-                vectors = vectorizer.transform([source_text, suspect_text])
-                similarity = cosine_similarity(vectors[0:1], vectors[1:2])
+                # Use the new word-level vectorizer
+                vectors = plag_vectorizer.fit_transform([source_text, suspect_text])
                 
-                # The result is a 2D array, so we get the single value
+                similarity = cosine_similarity(vectors[0:1], vectors[1:2])
                 similarity_score = similarity[0][0] * 100
                 
                 st.metric(
@@ -459,7 +498,6 @@ with plag_tab:
                     help="This is the percentage of similarity between the 'Source Text' and the 'Suspect Text' based on their shared vocabulary."
                 )
                 
-                # Add a simple progress bar
                 st.progress(int(similarity_score) / 100)
                 
                 if similarity_score > 75:
